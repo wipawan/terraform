@@ -45,11 +45,11 @@ resource "google_compute_firewall" "allow_my_traffic" {
 
   allow {
     protocol = "tcp"
-    ports    = ["22", "80"]
+    ports    = ["22", "8080", "443"]
   }
 
   # Adjust the CIDR range as needed.
-  source_ranges = [var.source_id]
+  source_ranges = concat([var.source_id], var.synthetic_ips)
 }
 
 # 4) Create an Ubuntu VM attached to the custom VPC/subnet
@@ -95,11 +95,25 @@ resource "google_compute_instance" "vm" {
     cat <<EOT > index.js
     const express = require('express');
     const app = express();
+    const { createLogger, format, transports } = require("winston");
+
+    const logger = createLogger({
+      level: "info",
+      exitOnError: false,
+      format: format.json(),
+      transports: [
+        new transports.Console(),
+        new transports.File({ filename: `./shared-volume/logs/app.log` }),
+      ]
+    });
+
     app.get('/', (req, res) => {
-      console.log('Hello world from console!');
+      logger.info('Hello world from console!');
       res.send('Hello from Compute Engine!');
     });
-    app.listen(80, () => console.log('Server running'));
+
+    app.listen(8080, () => console.log('Server running'));
+
     EOT
 
     # Create package.json
@@ -109,7 +123,8 @@ resource "google_compute_instance" "vm" {
       "version": "1.0.0",
       "main": "index.js",
       "dependencies": {
-        "express": "^4.18.2"
+        "express": "^4.18.2",
+        "winston": "^3.17.0"
       },
       "scripts": {
         "start": "node index.js"
@@ -119,11 +134,6 @@ resource "google_compute_instance" "vm" {
 
     # Install dependencies
     npm install
-
-    # Start the app with pm2 (ensures it runs on reboot)
-    pm2 start index.js --name node-app
-    pm2 save
-    pm2 startup systemd
 
   EOF
 
